@@ -100,7 +100,47 @@ def build_response_for_symptom(symptom_raw: str) -> str:
     return "\n".join(lines)
 
 
-# ============ DIALOGFLOW WEBHOOK ============
+# ============ HỖ TRỢ CHO WEBCHAT TRỰC TIẾP ============
+
+def detect_symptom_from_text(text: str) -> str:
+    """
+    Rút ra triệu chứng chính từ câu người dùng gõ trực tiếp trên web.
+    Đơn giản: nếu thấy từ khóa nào trong SYMPTOM_INDEX thì dùng từ khóa đó.
+    """
+    if not text:
+        return ""
+
+    text_l = text.lower()
+
+    for name_key, record in SYMPTOM_INDEX.items():
+        if name_key in text_l:
+            # lấy dạng "chuẩn" là name đầu tiên trong record
+            names = record.get("names", [])
+            return names[0] if names else name_key
+
+    # nếu không match gì, trả lại nguyên câu để build_response xử lý dạng "chưa có combo sẵn"
+    return text
+
+
+@app.route("/webchat", methods=["POST", "OPTIONS"])
+def webchat():
+    # Cho phép CORS preflight
+    if request.method == "OPTIONS":
+        resp = jsonify({"ok": True})
+        return resp
+
+    data = request.get_json(silent=True, force=True) or {}
+    user_text = data.get("message", "") or ""
+
+    print(f"[INFO] Webchat message: {user_text}")
+
+    symptom = detect_symptom_from_text(user_text)
+    reply = build_response_for_symptom(symptom)
+
+    return jsonify({"reply": reply})
+
+
+# ============ DIALOGFLOW WEBHOOK (GIỮ NGUYÊN) ============
 
 @app.route("/dialogflow-webhook", methods=["POST"])
 def dialogflow_webhook():
@@ -113,15 +153,23 @@ def dialogflow_webhook():
 
     text = "Em chưa xử lý intent này ạ, sẽ nhờ kỹ thuật bổ sung sau."
 
-    # Các intent tư vấn theo triệu chứng dùng cùng 1 logic
     if intent_name in ["tuvan_dau_dau", "tuvan_mat_ngu", "tuvan_dau_da_day"]:
         symptom_value = params.get("trieu_chung")
-        # Dialogflow đôi khi trả về list
         if isinstance(symptom_value, list):
             symptom_value = symptom_value[0] if symptom_value else ""
         text = build_response_for_symptom(symptom_value)
 
     return jsonify({"fulfillmentText": text})
+
+
+# ============ CORS CHO TOÀN BỘ API ============
+
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    return response
 
 
 if __name__ == "__main__":
