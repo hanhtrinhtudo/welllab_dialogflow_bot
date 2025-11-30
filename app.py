@@ -3,9 +3,20 @@ import json
 from pathlib import Path
 from flask import Flask, request, jsonify
 
+# ============ OPENAI ============
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+openai_client = OpenAI(api_key=OPENAI_API_KEY) if (OpenAI and OPENAI_API_KEY) else None
+
+
 app = Flask(__name__)
 
-# ============ LOAD DATA TỪ FILE JSON ============
+# ============ LOAD DATA ============
+
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 SYMPTOMS_PATH = DATA_DIR / "symptoms_mapping.json"
@@ -16,54 +27,66 @@ def load_symptoms():
         with open(SYMPTOMS_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
     except Exception as e:
-        print(f"[ERROR] Không đọc được {SYMPTOMS_PATH}: {e}")
+        print(f"[ERROR] Không load được file triệu chứng: {e}")
         data = []
 
-    # Tạo index: mỗi tên (name) → 1 record
     index = {}
     for item in data:
         for name in item.get("names", []):
-            key = name.lower().strip()
-            index[key] = item
-    print(f"[INFO] Đã load {len(data)} triệu chứng, {len(index)} tên mapping.")
+            index[name.lower().strip()] = item
+
+    print(f"[INFO] Loaded {len(data)} triệu chứng, {len(index)} tên mapping.")
     return index
 
 
 SYMPTOM_INDEX = load_symptoms()
 
 
+# ============ XỬ LÝ TRIỆU CHỨNG ============
+
 def find_symptom_record(symptom_raw: str):
-    """Tìm record theo tên triệu chứng người dùng nói."""
     if not symptom_raw:
         return None
 
-    key = str(symptom_raw).lower().strip()
-
-    # Tìm đúng trước
+    key = symptom_raw.lower().strip()
     if key in SYMPTOM_INDEX:
         return SYMPTOM_INDEX[key]
 
-    # Nếu không thấy, thử dò gần giống (chứa nhau)
     for name_key, record in SYMPTOM_INDEX.items():
         if key in name_key or name_key in key:
             return record
+
     return None
+
+
+def detect_symptom_from_text(text: str) -> str:
+    if not text:
+        return ""
+
+    t = text.lower()
+    for name_key, record in SYMPTOM_INDEX.items():
+        if name_key in t:
+            names = record.get("names", [])
+            return names[0] if names else name_key
+
+    return ""
 
 
 def build_response_for_symptom(symptom_raw: str) -> str:
     if not symptom_raw:
         return (
             "Dạ em chưa nhận rõ triệu chứng ạ.\n"
-            "Anh/chị mô tả giúp em đang gặp vấn đề gì (ví dụ: đau đầu, mất ngủ, đau dạ dày...) "
-            "để em tư vấn combo phù hợp nhé."
+            "Anh/chị mô tả giúp em đang gặp vấn đề gì (vd: đau đầu, mất ngủ, đau dạ dày...) "
+            "để em gợi ý combo phù hợp nhé."
         )
 
     record = find_symptom_record(symptom_raw)
+
     if not record:
         return (
-            f"Dạ với tình trạng **{symptom_raw}** em chưa có combo tối ưu sẵn ạ.\n"
-            "Anh/chị mô tả chi tiết hơn (thời gian bị, mức độ, bệnh nền) để em nhờ tuyến trên "
-            "hoặc chuyên gia hỗ trợ tư vấn kỹ hơn cho mình nhé."
+            f"Dạ với tình trạng **{symptom_raw}** em chưa có combo tối ưu ạ.\n"
+            "Anh/chị mô tả chi tiết hơn (thời gian bị, mức độ, bệnh nền) "
+            "để em nhờ tuyến trên tư vấn kỹ hơn nhé."
         )
 
     combo_code = record.get("combo_code", "")
@@ -73,9 +96,7 @@ def build_response_for_symptom(symptom_raw: str) -> str:
     note = record.get("note", "")
 
     lines = []
-    lines.append(
-        f"Với tình trạng **{symptom_raw}**, bên em đang có **{combo_code}** – {title}:"
-    )
+    lines.append(f"Với tình trạng **{symptom_raw}**, bên em có **{combo_code} – {title}**:")
 
     for p in products:
         lines.append(
@@ -83,86 +104,159 @@ def build_response_for_symptom(symptom_raw: str) -> str:
         )
 
     if usage:
-        lines.append("")
-        lines.append(f"📌 Cách dùng khuyến nghị: {usage}")
+        lines.append("\n📌 Cách dùng: " + usage)
 
     if note:
-        lines.append(f"💡 Lưu ý thêm: {note}")
+        lines.append("💡 Lưu ý: " + note)
 
     lines.append(
-        "\nAnh/chị cho em thêm thông tin về tuổi, bệnh nền và thuốc đang dùng "
-        "để em điều chỉnh tư vấn phù hợp hơn ạ."
+        "\nAnh/chị cho em biết tuổi, bệnh nền và thuốc đang dùng để em tinh chỉnh combo nhé."
     )
+
     lines.append(
-        "\nAnh/chị muốn **được TVV gọi tư vấn thêm** hay **đặt luôn combo này** ạ?"
+        "\nAnh/chị muốn **TVV gọi lại** hay **đặt luôn combo này** ạ?"
     )
 
     return "\n".join(lines)
 
 
-# ============ HỖ TRỢ CHO WEBCHAT TRỰC TIẾP ============
+# ============ NLP HIỂU NGÔN NGỮ NGƯỜI DÙNG ============
 
-def detect_symptom_from_text(text: str) -> str:
+def nlp_understand_message(text: str) -> dict:
     """
-    Rút ra triệu chứng chính từ câu người dùng gõ trực tiếp trên web.
-    Đơn giản: nếu thấy từ khóa nào trong SYMPTOM_INDEX thì dùng từ khóa đó.
+    Phân tích ngôn ngữ tự nhiên:
+    - intent: symptom_advice / product_question / smalltalk / unknown
+    - symptom: tên triệu chứng
+    - product_code: WL-xxx nếu có
     """
+    base = {
+        "intent": "unknown",
+        "symptom": "",
+        "product_code": ""
+    }
+
     if not text:
-        return ""
+        return base
 
-    text_l = text.lower()
+    # Không có OpenAI → fallback
+    if not openai_client:
+        symptom = detect_symptom_from_text(text)
+        if symptom:
+            base["intent"] = "symptom_advice"
+            base["symptom"] = symptom
+        return base
 
-    for name_key, record in SYMPTOM_INDEX.items():
-        if name_key in text_l:
-            # lấy dạng "chuẩn" là name đầu tiên trong record
-            names = record.get("names", [])
-            return names[0] if names else name_key
+    prompt = (
+        "Bạn là module NLP cho chatbot Welllab.\n"
+        "Phân tích câu và trả về JSON:\n"
+        "{\n"
+        "  \"intent\": \"symptom_advice | product_question | smalltalk | unknown\",\n"
+        "  \"symptom\": \"tên triệu chứng nếu có\",\n"
+        "  \"product_code\": \"WL-xxx nếu có\"\n"
+        "}\n"
+        "Không giải thích thêm."
+    )
 
-    # nếu không match gì, trả lại nguyên câu để build_response xử lý dạng "chưa có combo sẵn"
-    return text
+    try:
+        resp = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": text},
+            ],
+            max_tokens=150,
+            temperature=0.1,
+        )
+        content = resp.choices[0].message.content
+        print("[DEBUG] NLU:", content)
 
+        parsed = json.loads(content)
+        base.update(parsed)
+
+        return base
+
+    except Exception as e:
+        print("[ERROR] NLP:", e)
+        symptom = detect_symptom_from_text(text)
+        if symptom:
+            base["intent"] = "symptom_advice"
+            base["symptom"] = symptom
+        return base
+
+
+# ============ API CHO WEBCHAT ============
 
 @app.route("/webchat", methods=["POST", "OPTIONS"])
 def webchat():
-    # Cho phép CORS preflight
     if request.method == "OPTIONS":
-        resp = jsonify({"ok": True})
-        return resp
+        return jsonify({"ok": True})
 
     data = request.get_json(silent=True, force=True) or {}
-    user_text = data.get("message", "") or ""
+    user_text = data.get("message", "")
 
-    print(f"[INFO] Webchat message: {user_text}")
+    print(f"[INFO] Webchat nhận: {user_text}")
 
-    symptom = detect_symptom_from_text(user_text)
-    reply = build_response_for_symptom(symptom)
+    nlu = nlp_understand_message(user_text)
+    print("[INFO] NLP:", nlu)
+
+    intent = nlu.get("intent", "")
+    symptom = nlu.get("symptom", "")
+    product_code = nlu.get("product_code", "")
+
+    # ===== 1) Tư vấn triệu chứng =====
+    if intent == "symptom_advice":
+        if not symptom:
+            symptom = detect_symptom_from_text(user_text)
+        reply = build_response_for_symptom(symptom)
+
+    # ===== 2) Hỏi mã sản phẩm =====
+    elif intent == "product_question" and product_code:
+        reply = (
+            f"Anh/chị hỏi về sản phẩm **{product_code}**.\n"
+            "Hiện bản này ưu tiên tư vấn theo triệu chứng.\n"
+            "Anh/chị mô tả vấn đề sức khỏe để em gợi ý combo chính xác hơn nhé."
+        )
+
+    # ===== 3) Smalltalk =====
+    elif intent == "smalltalk":
+        reply = (
+            "Dạ em chào anh/chị 😊\n"
+            "Anh/chị đang gặp vấn đề gì để em hỗ trợ ạ?"
+        )
+
+    # ===== 4) Không hiểu rõ =====
+    else:
+        reply = (
+            "Dạ em chưa hiểu rõ nhu cầu của anh/chị ạ.\n"
+            "Anh/chị mô tả giúp em triệu chứng (đau đầu, mất ngủ, dạ dày...) nhé."
+        )
 
     return jsonify({"reply": reply})
 
 
-# ============ DIALOGFLOW WEBHOOK (GIỮ NGUYÊN) ============
+# ============ WEBHOOK DIALOGFLOW (GIỮ NGUYÊN) ============
 
 @app.route("/dialogflow-webhook", methods=["POST"])
 def dialogflow_webhook():
     data = request.get_json(silent=True, force=True) or {}
     query_result = data.get("queryResult", {})
     intent_name = query_result.get("intent", {}).get("displayName", "")
-    params = query_result.get("parameters", {}) or {}
+    params = query_result.get("parameters", {})
 
-    print(f"[INFO] Nhận intent: {intent_name}, params: {params}")
-
-    text = "Em chưa xử lý intent này ạ, sẽ nhờ kỹ thuật bổ sung sau."
+    print(f"[INFO] Dialogflow nhận intent: {intent_name}")
 
     if intent_name in ["tuvan_dau_dau", "tuvan_mat_ngu", "tuvan_dau_da_day"]:
         symptom_value = params.get("trieu_chung")
         if isinstance(symptom_value, list):
-            symptom_value = symptom_value[0] if symptom_value else ""
-        text = build_response_for_symptom(symptom_value)
+            symptom_value = symptom_value[0]
+        reply = build_response_for_symptom(symptom_value)
+    else:
+        reply = "Em chưa xử lý intent này."
 
-    return jsonify({"fulfillmentText": text})
+    return jsonify({"fulfillmentText": reply})
 
 
-# ============ CORS CHO TOÀN BỘ API ============
+# ============ CORS ============
 
 @app.after_request
 def add_cors_headers(response):
