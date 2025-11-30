@@ -12,7 +12,6 @@ except ImportError:
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if (OpenAI and OPENAI_API_KEY) else None
 
-
 app = Flask(__name__)
 
 # ============ LOAD DATA ============
@@ -31,15 +30,22 @@ def load_symptoms():
         data = []
 
     index = {}
+    canonical_names = []
+
     for item in data:
-        for name in item.get("names", []):
+        names = item.get("names", [])
+        if not names:
+            continue
+        canonical = names[0].lower().strip()
+        canonical_names.append(canonical)
+        for name in names:
             index[name.lower().strip()] = item
 
     print(f"[INFO] Loaded {len(data)} triệu chứng, {len(index)} tên mapping.")
-    return index
+    return index, canonical_names
 
 
-SYMPTOM_INDEX = load_symptoms()
+SYMPTOM_INDEX, SYMPTOM_CANONICAL_LIST = load_symptoms()
 
 
 # ============ XỬ LÝ TRIỆU CHỨNG ============
@@ -126,7 +132,7 @@ def nlp_understand_message(text: str) -> dict:
     """
     Phân tích ngôn ngữ tự nhiên:
     - intent: symptom_advice / product_question / smalltalk / unknown
-    - symptom: tên triệu chứng
+    - symptom: tên triệu chứng (một trong SYMPTOM_CANONICAL_LIST) hoặc ''
     - product_code: WL-xxx nếu có
     """
     base = {
@@ -138,7 +144,7 @@ def nlp_understand_message(text: str) -> dict:
     if not text:
         return base
 
-    # Không có OpenAI → fallback
+    # Không có OpenAI → fallback keyword
     if not openai_client:
         symptom = detect_symptom_from_text(text)
         if symptom:
@@ -146,15 +152,27 @@ def nlp_understand_message(text: str) -> dict:
             base["symptom"] = symptom
         return base
 
+    # Chuẩn bị danh sách triệu chứng hợp lệ cho GPT
+    symptom_list_str = ", ".join(
+        sorted({name for name in SYMPTOM_CANONICAL_LIST})
+    )
+
     prompt = (
         "Bạn là module NLP cho chatbot Welllab.\n"
-        "Phân tích câu và trả về JSON:\n"
-        "{\n"
-        "  \"intent\": \"symptom_advice | product_question | smalltalk | unknown\",\n"
-        "  \"symptom\": \"tên triệu chứng nếu có\",\n"
-        "  \"product_code\": \"WL-xxx nếu có\"\n"
-        "}\n"
-        "Không giải thích thêm."
+        "Nhiệm vụ: phân tích câu tiếng Việt của người dùng và trả về JSON với 3 khóa:\n"
+        "  - intent: một trong các giá trị: symptom_advice, product_question, smalltalk, unknown\n"
+        "  - symptom: tên triệu chứng chính nếu câu nói liên quan tư vấn sức khỏe.\n"
+        "  - product_code: mã sản phẩm dạng WL-xxx nếu câu nói hỏi trực tiếp về sản phẩm.\n\n"
+        f"Danh sách triệu chứng hợp lệ (symptom) phải chọn từ trong danh sách sau nếu gần nghĩa:\n"
+        f"{symptom_list_str}\n\n"
+        "Nếu câu nói mô tả vấn đề sức khỏe gần với một trong các triệu chứng trên, "
+        "hãy chọn đúng chuỗi đó làm symptom (giữ nguyên chính tả). "
+        "Ví dụ: 'nhức nửa đầu' → 'đau đầu', 'khó ngủ hay tỉnh giữa đêm' → 'mất ngủ'.\n"
+        "Nếu không liên quan triệu chứng nào thì để symptom là \"\".\n\n"
+        "Nếu câu hỏi chỉ mang tính chào hỏi, xã giao (ví dụ: 'hello', 'chào em', 'em khoẻ không') "
+        "thì intent là smalltalk.\n"
+        "Nếu câu hỏi hỏi về một mã sản phẩm (có dạng WL-xxx) thì intent là product_question và điền product_code.\n\n"
+        "CHỈ TRẢ VỀ JSON THUẦN, KHÔNG GIẢI THÍCH."
     )
 
     try:
@@ -164,14 +182,20 @@ def nlp_understand_message(text: str) -> dict:
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": text},
             ],
-            max_tokens=150,
+            max_tokens=200,
             temperature=0.1,
         )
         content = resp.choices[0].message.content
-        print("[DEBUG] NLU:", content)
+        print("[DEBUG] NLU raw:", content)
 
         parsed = json.loads(content)
-        base.update(parsed)
+        base.update({k: parsed.get(k, base[k]) for k in base.keys()})
+
+        # Nếu GPT không chọn symptom nhưng text có chứa từ khóa, fallback thêm lần nữa
+        if base["intent"] == "symptom_advice" and not base["symptom"]:
+            fallback_symptom = detect_symptom_from_text(text)
+            if fallback_symptom:
+                base["symptom"] = fallback_symptom
 
         return base
 
@@ -204,7 +228,7 @@ def webchat():
     product_code = nlu.get("product_code", "")
 
     # ===== 1) Tư vấn triệu chứng =====
-    if intent == "symptom_advice":
+    if intent == "symptom_advice" and (symptom or detect_symptom_from_text(user_text)):
         if not symptom:
             symptom = detect_symptom_from_text(user_text)
         reply = build_response_for_symptom(symptom)
@@ -221,7 +245,7 @@ def webchat():
     elif intent == "smalltalk":
         reply = (
             "Dạ em chào anh/chị 😊\n"
-            "Anh/chị đang gặp vấn đề gì để em hỗ trợ ạ?"
+            "Anh/chị đang gặp vấn đề gì về sức khỏe để em hỗ trợ ạ?"
         )
 
     # ===== 4) Không hiểu rõ =====
@@ -234,7 +258,7 @@ def webchat():
     return jsonify({"reply": reply})
 
 
-# ============ WEBHOOK DIALOGFLOW (GIỮ NGUYÊN) ============
+# ============ WEBHOOK DIALOGFLOW ============
 
 @app.route("/dialogflow-webhook", methods=["POST"])
 def dialogflow_webhook():
