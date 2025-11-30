@@ -1,0 +1,62 @@
+[
+  {
+    "id": "dau_dau",
+    "names": ["đau đầu", "nhức đầu", "migraine", "đau nửa đầu", "căng đầu"],
+    "combo_code": "COMBO_DAU_DAU_01",
+    "title": "Combo hỗ trợ giảm đau đầu & tăng tuần hoàn máu não",
+    "products": [
+      {
+        "code": "WL-101",
+        "name": "Welllab Brain Support",
+        "link": "https://example.com/wl-101"
+      },
+      {
+        "code": "WL-202",
+        "name": "Welllab Sleep Ease",
+        "link": "https://example.com/wl-202"
+      }
+    ],
+    "usage": "Uống sau ăn, ngày 2 lần, mỗi lần 1–2 viên. Dùng tối thiểu 2–3 tháng.",
+    "note": "Ưu tiên kết hợp nghỉ ngơi, giảm căng thẳng, uống đủ nước."
+  },
+  {
+    "id": "mat_ngu",
+    "names": ["mất ngủ", "khó ngủ", "ngủ không sâu", "trằn trọc", "thức giữa đêm"],
+    "combo_code": "COMBO_MAT_NGU_01",
+    "title": "Combo hỗ trợ cải thiện giấc ngủ, giảm stress",
+    "products": [
+      {
+        "code": "WL-202",
+        "name": "Welllab Sleep Ease",
+        "link": "https://example.com/wl-202"
+      },
+      {
+        "code": "WL-303",
+        "name": "Welllab Anti-Stress",
+        "link": "https://example.com/wl-303"
+      }
+    ],
+    "usage": "Uống trước khi ngủ 30–60 phút, dùng liên tục tối thiểu 4–8 tuần.",
+    "note": "Hạn chế cà phê, trà đặc, dùng thiết bị điện tử trước khi ngủ."
+  },
+  {
+    "id": "dau_da_day",
+    "names": ["đau dạ dày", "đau bao tử", "viêm dạ dày", "trào ngược", "đau thượng vị"],
+    "combo_code": "COMBO_DAU_DA_DAY_01",
+    "title": "Combo hỗ trợ dạ dày, giảm trào ngược & nóng rát",
+    "products": [
+      {
+        "code": "WL-404",
+        "name": "Welllab Gastro Care",
+        "link": "https://example.com/wl-404"
+      },
+      {
+        "code": "WL-405",
+        "name": "Welllab Digest Support",
+        "link": "https://example.com/wl-405"
+      }
+    ],
+    "usage": "Uống trước ăn 20–30 phút hoặc theo hướng dẫn chi tiết từng sản phẩm.",
+    "note": "Tránh ăn quá no, cay, chiên rán; không nằm ngay sau ăn."
+  }
+]
