@@ -37,13 +37,14 @@ def find_symptom_record(symptom_raw: str):
     if not symptom_raw:
         return None
 
-    key = symptom_raw.lower().strip()
-    # Tìm đúng trước
-    if key in SYPMTOM_INDEX:
-        return SYPMTOM_INDEX[key]
+    key = str(symptom_raw).lower().strip()
 
-    # Nếu không thấy, thử dò gần giống (bắt đầu bằng…)
-    for name_key, record in SYPMTOM_INDEX.items():
+    # Tìm đúng trước
+    if key in SYMPTOM_INDEX:
+        return SYMPTOM_INDEX[key]
+
+    # Nếu không thấy, thử dò gần giống (chứa nhau)
+    for name_key, record in SYMPTOM_INDEX.items():
         if key in name_key or name_key in key:
             return record
     return None
@@ -106,15 +107,19 @@ def dialogflow_webhook():
     data = request.get_json(silent=True, force=True) or {}
     query_result = data.get("queryResult", {})
     intent_name = query_result.get("intent", {}).get("displayName", "")
-    params = query_result.get("parameters", {})
+    params = query_result.get("parameters", {}) or {}
 
     print(f"[INFO] Nhận intent: {intent_name}, params: {params}")
 
     text = "Em chưa xử lý intent này ạ, sẽ nhờ kỹ thuật bổ sung sau."
 
+    # Các intent tư vấn theo triệu chứng dùng cùng 1 logic
     if intent_name in ["tuvan_dau_dau", "tuvan_mat_ngu", "tuvan_dau_da_day"]:
-    symptom_value = parameters.get("trieu_chung")
-    text = build_response_for_symptom(symptom_value)
+        symptom_value = params.get("trieu_chung")
+        # Dialogflow đôi khi trả về list
+        if isinstance(symptom_value, list):
+            symptom_value = symptom_value[0] if symptom_value else ""
+        text = build_response_for_symptom(symptom_value)
 
     return jsonify({"fulfillmentText": text})
 
@@ -122,4 +127,3 @@ def dialogflow_webhook():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, debug=True)
-
