@@ -112,9 +112,9 @@ def dialogflow_webhook():
 
     text = "Em chưa xử lý intent này ạ, sẽ nhờ kỹ thuật bổ sung sau."
 
-    if intent_name == "tuvan_dau_dau":
-        symptom_value = params.get("trieu_chung")
-        text = build_response_for_symptom(symptom_value)
+    if intent_name in ["tuvan_dau_dau", "tuvan_mat_ngu", "tuvan_dau_da_day"]:
+    symptom_value = parameters.get("trieu_chung")
+    text = build_response_for_symptom(symptom_value)
 
     return jsonify({"fulfillmentText": text})
 
@@ -122,3 +122,4 @@ def dialogflow_webhook():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, debug=True)
+
